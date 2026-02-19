@@ -1,0 +1,139 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: xxx
+  namespace: velero
+spec:
+  # change the schedule as per your choice
+  schedule: "20 23 * * 1,4"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: velero
+          restartPolicy: Never
+          containers:
+            - name: notifier
+              # Alpine so we can apk add kubectl + curl quickly
+              image: alpine:latest
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: COS_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: slack-webhook
+                      key: cos_bucket
+                - name: VELERO_NAMESPACE
+                  valueFrom:
+                    secretKeyRef:
+                      name: slack-webhook
+                      key: namespace
+                # REQUIRED: the schedule whose latest backup we check
+                - name: SCHEDULE_NAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: slack-webhook
+                      key: schedule
+                - name: SLACK_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: slack-webhook
+                      key: webhook_url
+              command:
+                - /bin/sh
+                - -ceu
+                - |
+                  # Install just what we need
+                  apk add --no-cache kubectl curl >/dev/null
+
+                  # Check if the schedule is present
+                  echo "[INFO] Checking if schedule '${SCHEDULE_NAME}' is present…" 
+                  if ! kubectl -n "${VELERO_NAMESPACE}" get schedules.velero.io "${SCHEDULE_NAME}" >/dev/null 2>&1; then
+                    echo "[WARN] Schedule '${SCHEDULE_NAME}' not found in namespace '${VELERO_NAMESPACE}'. Exiting."                    
+                    exit 0                  
+                  fi
+                  
+                  # Check if the schedule is in paused state
+                  PAUSED="$(kubectl -n "${VELERO_NAMESPACE}" get schedules.velero.io "${SCHEDULE_NAME}" -o jsonpath='{.spec.paused}')"
+                  if [ "${PAUSED}" = "true" ]; then
+                    echo "[INFO] Schedule '${SCHEDULE_NAME}' is paused. Skipping Slack notification."
+                    exit 0                  
+                  fi                  
+                  
+                  echo "[INFO] Schedule is unpaused. Selecting latest *Completed* backup by completion time…"
+
+                  echo "[INFO] Checking latest backup for schedule: ${SCHEDULE_NAME}"
+
+                  # Get the latest backup created by this schedule
+                  echo "[INFO] Selecting latest *Completed* backup by completion time…"
+                  LATEST_BACKUP="$(
+                    kubectl -n "${VELERO_NAMESPACE}" get backups.velero.io \
+                      -l "velero.io/schedule-name=${SCHEDULE_NAME}" \
+                      --sort-by='{.status.completionTimestamp}' \
+                      -o jsonpath='{range .items[?(@.status.phase=="Completed")]}{.metadata.name}{"\n"}{end}' \
+                    | tail -n 1
+                  )"
+
+                  if [ -z "${LATEST_BACKUP}" ]; then
+                    echo "[INFO] No backups found for schedule '${SCHEDULE_NAME}' in namespace '${VELERO_NAMESPACE}'. Exiting."
+                    exit 0
+                  fi
+
+                  # Get creation & completion timestamps
+                  CREATED="$(kubectl -n "${VELERO_NAMESPACE}" get backups.velero.io "${LATEST_BACKUP}" -o jsonpath='{.metadata.creationTimestamp}' 2>/dev/null || true)"
+                  COMPLETED="$(kubectl -n "${VELERO_NAMESPACE}" get backups.velero.io "${LATEST_BACKUP}" -o jsonpath='{.status.completionTimestamp}' 2>/dev/null || true)"
+
+                  if [ -z "${CREATED}" ] || [ -z "${COMPLETED}" ]; then
+                    echo "[WARN] Missing timestamps on backup '${LATEST_BACKUP}'. Exiting."
+                    exit 0
+                  fi
+
+                  # Compare DATE parts (YYYY-MM-DD) in UTC
+                  CURRENT_DATE="$(date +"%Y-%m-%d")"
+                  COMPLETED_DATE="${COMPLETED%%T*}"
+                  CREATED_DATE="${CREATED%%T*}"
+                  echo "[INFO] Backup: ${LATEST_BACKUP} | Created date: ${CREATED_DATE} | Completed date: ${COMPLETED_DATE}"
+
+                  if [ "${CURRENT_DATE}" != "${COMPLETED_DATE}" ]; then
+                    echo "[INFO] Dates do not match; skipping Slack notification per policy."
+                    exit 0
+                  fi
+
+                  # Check the phases of the schedule
+                  PHASE="$(kubectl -n "${VELERO_NAMESPACE}" get backups.velero.io "${LATEST_BACKUP}" -o jsonpath='{.status.phase}')"
+                  WARN="$(kubectl -n "${VELERO_NAMESPACE}" get backups.velero.io "${LATEST_BACKUP}" -o jsonpath='{.status.warnings}' 2>/dev/null || echo 0)"
+                  ERR="$(kubectl -n "${VELERO_NAMESPACE}" get backups.velero.io "${LATEST_BACKUP}" -o jsonpath='{.status.errors}' 2>/dev/null || echo 0)"
+                  START="$(kubectl -n "${VELERO_NAMESPACE}" get backups.velero.io "${LATEST_BACKUP}" -o jsonpath='{.status.startTimestamp}' 2>/dev/null || echo -)"
+                  DONE="$(kubectl -n "${VELERO_NAMESPACE}" get backups.velero.io "${LATEST_BACKUP}" -o jsonpath='{.status.completionTimestamp}' 2>/dev/null || echo -)"
+
+                  echo "[INFO] Latest backup: ${LATEST_BACKUP} | Phase: ${PHASE} | Warnings: ${WARN:-0} | Errors: ${ERR:-0}"
+
+                  if [ "${PHASE}" = "Completed" ]; then
+                    TEXT="✅ K8S Objects backup by Velero for <app_namespace> environment (SUCCESS)\n*Environment:* Dev\n*Time(UTC):* ${DONE}\n*COS Bucket:* ${COS_BUCKET}\n*Backup Object:* ${LATEST_BACKUP}\n*Schedule:* ${SCHEDULE_NAME}\n"
+                  elif [ "${PHASE}" = "Failed" ] || [ "${PHASE}" = "PartiallyFailed" ]; then
+                    TEXT="❌ K8S Objects backup by Velero for <app_namespace> environment not successful — Phase: *${PHASE}*\nStart: ${START}\nCompleted: ${DONE}\n"
+                  else
+                    # Non-terminal states (New/InProgress/etc.) — send a lightweight heads-up
+                    TEXT="ℹ️ K8S Objects backup by Velero for <app_namespace> environment is in progress — Phase: *${PHASE}*"
+                  fi
+
+                  # Escape newlines for Slack JSON
+                  TEXT_ESC=$(printf '%s' "$TEXT" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+
+                  echo "[INFO] Sending Slack message..."
+                  HTTP_CODE=$(curl -sS -o /tmp/slack.out -w '%{http_code}' \
+                    -X POST -H 'Content-type: application/json' \
+                    --data "{\"text\":\"${TEXT_ESC}\"}" \
+                    "${SLACK_WEBHOOK_URL}" || true)
+
+                  if [ "${HTTP_CODE}" != "200" ]; then
+                    echo "[WARN] Slack webhook returned HTTP ${HTTP_CODE}"
+                    cat /tmp/slack.out || true
+                  fi
+
+                  echo "[INFO] Done."
+
