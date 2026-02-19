@@ -32,6 +32,22 @@ The integration intelligently handles different backup states (Completed, Failed
 - Slack webhook URL
 - kubectl access to the cluster
 
+## Configuration
+
+Edit the `cronjob.yaml` file to customize:
+
+- **Schedule**: Modify the `schedule` field (default: `"20 23 * * 1,4"` - runs at 23:20 UTC on Mondays and Thursdays)
+- **CronJob name**: Update the `metadata.name` field
+- **Environment variables**: Adjust the secret references as needed
+
+### Required Secret Keys
+
+The `slack-webhook` secret must contain:
+- `webhook_url`: Your Slack webhook URL
+- `schedule`: Name of the Velero schedule to monitor
+- `namespace`: Velero namespace (typically `velero`)
+- `cos_bucket`: Cloud Object Storage bucket name
+
 ## Installation
 
 1. **Create a Slack webhook secret:**
@@ -50,22 +66,6 @@ kubectl create secret generic slack-webhook \
 ```bash
 kubectl apply -f cronjob.yaml
 ```
-
-## Configuration
-
-Edit the `cronjob.yaml` file to customize:
-
-- **Schedule**: Modify the `schedule` field (default: `"20 23 * * 1,4"` - runs at 23:20 UTC on Mondays and Thursdays)
-- **CronJob name**: Update the `metadata.name` field
-- **Environment variables**: Adjust the secret references as needed
-
-### Required Secret Keys
-
-The `slack-webhook` secret must contain:
-- `webhook_url`: Your Slack webhook URL
-- `schedule`: Name of the Velero schedule to monitor
-- `namespace`: Velero namespace (typically `velero`)
-- `cos_bucket`: Cloud Object Storage bucket name
 
 ## How It Works
 
@@ -93,6 +93,3 @@ Success notification includes:
 - Verify secret exists: `kubectl get secret slack-webhook -n velero`
 - Ensure Velero schedule exists: `kubectl get schedules.velero.io -n velero`
 
-## License
-
-This project is open source and available under the MIT License.
