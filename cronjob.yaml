@@ -113,12 +113,12 @@ spec:
                   echo "[INFO] Latest backup: ${LATEST_BACKUP} | Phase: ${PHASE} | Warnings: ${WARN:-0} | Errors: ${ERR:-0}"
 
                   if [ "${PHASE}" = "Completed" ]; then
-                    TEXT="✅ K8S Objects backup by Velero for <app_namespace> environment (SUCCESS)\n*Environment:* Dev\n*Time(UTC):* ${DONE}\n*COS Bucket:* ${COS_BUCKET}\n*Backup Object:* ${LATEST_BACKUP}\n*Schedule:* ${SCHEDULE_NAME}\n"
+                    TEXT="✅ Velero‑Based Backup of Kubernetes Objects for the <app_namespace> Environment (SUCCESS)\n*Environment:* Dev\n*Time(UTC):* ${DONE}\n*COS Bucket:* ${COS_BUCKET}\n*Backup Object:* ${LATEST_BACKUP}\n*Schedule:* ${SCHEDULE_NAME}\n"
                   elif [ "${PHASE}" = "Failed" ] || [ "${PHASE}" = "PartiallyFailed" ]; then
-                    TEXT="❌ K8S Objects backup by Velero for <app_namespace> environment not successful — Phase: *${PHASE}*\nStart: ${START}\nCompleted: ${DONE}\n"
+                    TEXT="❌ Velero‑Based Backup of Kubernetes Objects for the <app_namespace> Environment not successful — Phase: *${PHASE}*\nStart: ${START}\nCompleted: ${DONE}\n"
                   else
                     # Non-terminal states (New/InProgress/etc.) — send a lightweight heads-up
-                    TEXT="ℹ️ K8S Objects backup by Velero for <app_namespace> environment is in progress — Phase: *${PHASE}*"
+                    TEXT="ℹ️ Velero‑Based Backup of Kubernetes Objects for the <app_namespace> Environment is in progress — Phase: *${PHASE}*"
                   fi
 
                   # Escape newlines for Slack JSON
