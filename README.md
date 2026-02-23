@@ -89,7 +89,7 @@ Success notification includes:
 
 ## Troubleshooting
 
-- Check CronJob logs: `kubectl logs -n velero -l job-name=<job-name>`
-- Verify secret exists: `kubectl get secret slack-webhook -n velero`
-- Ensure Velero schedule exists: `kubectl get schedules.velero.io -n velero`
+- Check CronJob logs: `kubectl logs -n <namespace_where_velero_is_installed> -l job-name=<job-name>`
+- Verify secret exists: `kubectl get secret slack-webhook -n <namespace_where_velero_is_installed>`
+- Ensure Velero schedule exists: `kubectl get schedules -n <namespace_where_velero_is_installed>`
 
