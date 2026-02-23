@@ -54,7 +54,7 @@ The `slack-webhook` secret must contain:
 
 ```bash
 kubectl create secret generic slack-webhook \
-  --namespace=velero \
+  --namespace=<namespace_where_velero_is_installed> \
   --from-literal=webhook_url='YOUR_SLACK_WEBHOOK_URL' \
   --from-literal=schedule='YOUR_SCHEDULE_NAME' \
   --from-literal=namespace='velero' \
